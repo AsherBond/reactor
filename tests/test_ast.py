@@ -18,125 +18,75 @@ import reactor.ast
 
 class AstTests(unittest2.TestCase):
     def setUp(self):
-        self.node1 = {'strfield': 'testing',
-                      'intfield': 3,
-                      'arrayfield': [1, 2, 3]}
+        self.s1 = {'strfield': 'testing',
+                   'intfield': 3,
+                   'arrayfield': [1, 2, 3]}
 
     def tearDown(self):
         pass
 
-    def _eval(self, node, expression, ns=None):
-        ast = reactor.ast.FilterBuilder(reactor.ast.FilterTokenizer(),
-                                        input_expression=expression,
-                                        ns=ns)
-        return ast.eval_node(node)
+    def _eval(self, symtable, expression):
+        ast = reactor.ast.AstBuilder(input_expression=expression,
+                                     symtable=symtable)
+        return ast.eval()
 
     def test_int_equality(self):
-        self.assertTrue(self._eval(self.node1, 'intfield = 3'))
-        self.assertFalse(self._eval(self.node1, 'intfield = 2'))
+        self.assertTrue(self._eval(self.s1, 'intfield == 3'))
+        self.assertFalse(self._eval(self.s1, 'intfield == 2'))
 
-        self.assertFalse(self._eval(self.node1, 'intfield != 3'))
-        self.assertTrue(self._eval(self.node1, 'intfield != 2'))
+        self.assertFalse(self._eval(self.s1, 'intfield != 3'))
+        self.assertTrue(self._eval(self.s1, 'intfield != 2'))
 
     def test_int_comparison(self):
-        self.assertTrue(self._eval(self.node1, 'intfield > 2'))
-        self.assertTrue(self._eval(self.node1, 'intfield < 4'))
-        self.assertFalse(self._eval(self.node1, 'intfield > 4'))
-        self.assertFalse(self._eval(self.node1, 'intfield < 2'))
-
-        self.assertFalse(self._eval(self.node1, 'intfield !> 2'))
-        self.assertFalse(self._eval(self.node1, 'intfield !< 4'))
-        self.assertTrue(self._eval(self.node1, 'intfield !> 4'))
-        self.assertTrue(self._eval(self.node1, 'intfield !< 2'))
+        self.assertTrue(self._eval(self.s1, 'intfield > 2'))
+        self.assertTrue(self._eval(self.s1, 'intfield < 4'))
+        self.assertFalse(self._eval(self.s1, 'intfield > 4'))
+        self.assertFalse(self._eval(self.s1, 'intfield < 2'))
 
     def test_str_equality(self):
-        self.assertTrue(self._eval(self.node1, 'strfield = "testing"'))
-        self.assertFalse(self._eval(self.node1, 'strfield = "x"'))
-        self.assertFalse(self._eval(self.node1, 'strfield != "testing"'))
-        self.assertTrue(self._eval(self.node1, 'strfield != "x"'))
+        self.assertTrue(self._eval(self.s1, 'strfield == "testing"'))
+        self.assertFalse(self._eval(self.s1, 'strfield == "x"'))
+        self.assertFalse(self._eval(self.s1, 'strfield != "testing"'))
+        self.assertTrue(self._eval(self.s1, 'strfield != "x"'))
 
     def test_str_substring(self):
-        self.assertTrue(self._eval(self.node1, '"test" in strfield'))
-        self.assertFalse(self._eval(self.node1, '"x" in strfield'))
+        self.assertTrue(self._eval(self.s1, '"test" in strfield'))
+        self.assertFalse(self._eval(self.s1, '"x" in strfield'))
 
-        self.assertFalse(self._eval(self.node1, '"test" !in strfield'))
-        self.assertTrue(self._eval(self.node1, '"x" !in strfield'))
+        # need not function
+        # self.assertFalse(self._eval(self.s1, '"test" !in strfield'))
+        # self.assertTrue(self._eval(self.s1, '"x" !in strfield'))
 
     # no array equality... no static arrays
     def test_len(self):
-        self.assertTrue(self._eval(self.node1, 'count(arrayfield) = 3'))
+        self.assertTrue(self._eval(self.s1, 'count(arrayfield) == 3'))
         # Nones for invalid types
-        self.assertEqual(self._eval(self.node1, 'count(intfield)'), None)
-
-    def test_nth(self):
-        self.assertTrue(self._eval(self.node1, 'nth(0,arrayfield) = 1'))
-        self.assertFalse(self._eval(self.node1, 'nth(1,arrayfield) = 1'))
-        self.assertEqual(self._eval(self.node1, 'nth(1,intfield)'), None)
-
-    def test_str(self):
-        self.assertTrue(self._eval(self.node1, 'str(intfield) = "3"'))
-        self.assertTrue(self._eval(self.node1, 'str(0) = "0"'))
-
-    def test_int(self):
-        self.assertTrue(self._eval(self.node1, 'int(str(intfield)) = 3'))
-
-    def test_min(self):
-        self.assertTrue(self._eval(self.node1, 'min(arrayfield) = 1'))
-        # this is odd
-        self.assertFalse(self._eval(self.node1, 'min(intfield)'))
-
-    def test_max(self):
-        self.assertTrue(self._eval(self.node1, 'max(arrayfield) = 3'))
-        # again with the odd.  Should it except on type?
-        self.assertFalse(self._eval(self.node1, 'min(intfield)'))
-
-    def test_count(self):
-        self.assertTrue(self._eval(self.node1, 'count(arrayfield) = 3'))
-
-    def test_union(self):
-        self.assertTrue(self._eval(self.node1,
-                                   'max(union(arrayfield, 4)) = 4'))
-        self.assertTrue(self._eval(self.node1,
-                                   'count(union(arrayfield, 4)) = 4'))
-
-    def test_remove(self):
-        self.assertTrue(self._eval(self.node1,
-                                   'max(remove(arrayfield, 3)) = 2'))
-        self.assertTrue(self._eval(self.node1,
-                                   'count(remove(arrayfield, 3)) = 2'))
-
-    def test_static_array(self):
-        self.assertTrue(self._eval(self.node1,
-                                   'arrayfield = [ 1, 2, 3 ]'))
-
-    def test_ns(self):
-        ns = {'foo': 'bar'}
-        self.assertEqual(self._eval(self.node1, 'foo', ns), 'bar')
+        self.assertEqual(self._eval(self.s1, 'count(intfield)'), None)
 
     def test_arith(self):
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '3 + 5'), 8)
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '3 * 5'), 15)
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '8 / 2'), 4)
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '7 / 2'), 3)
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '8 - 2'), 6)
 
     def test_precedence(self):
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '1 + 2 * 3'), 7)
-        self.assertEqual(self._eval(self.node1,
+        self.assertEqual(self._eval(self.s1,
                                     '3 * 2 + 1'), 7)
-        self.assertTrue(self._eval(self.node1,
+        self.assertTrue(self._eval(self.s1,
                                    'true and false or true'))
-        self.assertTrue(self._eval(self.node1,
+        self.assertTrue(self._eval(self.s1,
                                    'true or false and true'))
 
     # def test_assignment(self):
     #     ns = {}
-    #     self._eval(self.node1, 'arf := 3')
+    #     self._eval(self.s1, 'arf := 3')
 
     #     self.assertEqual(ns['arf'], 3)

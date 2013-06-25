@@ -14,121 +14,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import re
 import copy
+import logging
+import operator
+import re
 
-
-# some common utility functions for filter/expr language
-def util_nth(n, ary):
-    if not isinstance(ary, list):
-        return None
-
-    if not isinstance(n, int):
-        return None
-
-    if (len(ary) - 1) < n:
-        return None
-
-    return ary[n]
-
-
-def util_str(what):
-    if what is None:
-        return None
-
-    return str(what)
-
-
-def util_int(what):
-    if what is None:
-        return None
-
-    return int(what)
-
-
-def util_max(ary):
-    if not isinstance(ary, list):
-        return False
-    return max(ary)
-
-
-def util_min(ary):
-    if not isinstance(ary, list):
-        return False
-    return min(ary)
-
-
-def util_count(ary):
-    if not isinstance(ary, list):
-        return None
-    return len(ary)
-
-
-def util_union(array, item):
-    """
-    given a list, add item to the list
-
-    :param: array: list to add item to
-    :param: item: item to add to list
-
-    :returns: modified list
-    """
-
-    if array is None:
-        return [item]
-
-    if not isinstance(array, list):
-        raise SyntaxError('union on non-list type')
-
-    newlist = copy.deepcopy(array)
-
-    if not item in newlist:
-        newlist.append(item)
-
-    return newlist
-
-
-def util_remove(array, item):
-    """
-    given a list, remove matching item.
-
-    :param: array: list to remove items from
-    :param: item: item to remove from array
-
-    :returns: modified list
-    """
-
-    if array is None:
-        return None
-
-    if not isinstance(array, list):
-        raise SyntaxError('remove on non-list type')
-
-    newlist = copy.deepcopy(array)
-
-    if item in newlist:
-        newlist.remove(item)
-
-    return newlist
-
-
-default_functions = {'nth': util_nth,
-                     'str': util_str,
-                     'int': util_int,
-                     'max': util_max,
-                     'min': util_min,
-                     'count': util_count,
-                     'union': util_union,
-                     'remove': util_remove}
-
-
-class AbstractTokenizer(object):
+# Stupid tokenizer.  Use:
+#
+# ft.parse(filter)
+# ft.scan() returns (token,value) tuple, destroying token
+# ft.peek() returns (token,value) tuple, leaving token on stack.
+#           if you peek and decide to process the token, then
+#           make sure you eat the token with a scan()!
+#
+# Since the entire filter is pre-tokenized, one could add
+# arbitrary lookahead.  I don't need it tho.
+#
+# it's trivially easy to confuse this lexer.
+#
+class Tokenizer(object):
     def __init__(self):
         self.tokens = []
         self.remainer = ''
         classname = self.__class__.__name__.lower()
         self.logger = logging.getLogger('%s.%s' % (__name__, classname))
+
+        self.scanner = re.Scanner([
+            (r"\+", self.arith_op),
+            (r"-", self.arith_op),
+            (r"/", self.arith_op),
+            (r"\*", self.arith_op),
+            (r"==", self.logical_op),
+            (r"!=", self.logical_op),
+            (r"=", self.arith_op),
+            (r"or", self.logical_op),
+            (r"and", self.logical_op),
+            (r"None", self.none),
+            (r"in ", self.logical_op),
+            (r"True", self.bool_lvalue),
+            (r"False", self.bool_lvalue),
+            (r",", self.comma),
+            (r"\.", self.dot),
+            (r"[ \t\n]+", None),
+            (r"[0-9]+", self.number),
+            (r"\(", self.open_paren),
+            (r"\)", self.close_paren),
+            (r"'([^'\\]*(?:\\.[^'\\]*)*)'", self.qstring),
+            (r'"([^"\\]*(?:\\.[^"\\]*)*)"', self.qstring),
+            (r"\<\=|\>\=", self.logical_op),
+            (r"\<|\>", self.logical_op),
+            (r"[A-Za-z{][A-Za-z0-9_\-{}]*", self.identifier),
+            (r"\[", self.open_bracket),
+            (r"\]", self.close_bracket)
+        ])
 
     def parse(self, input_expression):
         self.tokens, self.remainder = self.scanner.scan(input_expression)
@@ -150,58 +88,9 @@ class AbstractTokenizer(object):
     def peek(self):
         return self.tokens[0]
 
-
-# Stupid tokenizer.  Use:
-#
-# ft.parse(filter)
-# ft.scan() returns (token,value) tuple, destroying token
-# ft.peek() returns (token,value) tuple, leaving token on stack.
-#           if you peek and decide to process the token, then
-#           make sure you eat the token with a scan()!
-#
-# Since the entire filter is pre-tokenized, one could add
-# arbitrary lookahead.  I don't need it tho.
-#
-# it's trivially easy to confuse this lexer.
-#
-class FilterTokenizer(AbstractTokenizer):
-    def __init__(self):
-        super(FilterTokenizer, self).__init__()
-
-        self.scanner = re.Scanner([
-            (r"\+", self.arith),
-            (r"-", self.arith),
-            (r"/", self.arith),
-            (r"\*", self.arith),
-            (r"!", self.negation),
-            (r":=", self.op),
-            (r"or", self.or_op),
-            (r"and", self.and_op),
-            (r"none", self.none),
-            (r"in ", self.in_op),
-            (r"true", self.bool_op),
-            (r"false", self.bool_op),
-            (r",", self.comma),
-            (r"[ \t\n]+", None),
-            (r"[0-9]+", self.number),
-            (r"\(", self.open_paren),
-            (r"\)", self.close_paren),
-            (r"'([^'\\]*(?:\\.[^'\\]*)*)'", self.qstring),
-            (r'"([^"\\]*(?:\\.[^"\\]*)*)"', self.qstring),
-            (r"\<\=|\>\=", self.op),
-            (r"\=|\<|\>", self.op),
-            (r"[A-Za-z{][A-Za-z0-9_\-{}]*", self.identifier),
-            (r"\[", self.open_bracket),
-            (r"\]", self.close_bracket),
-            (r"\.", self.deref)
-        ])
-
     # token generators
-    def arith(self, scanner, token):
-        return 'ARITH', token
-
-    def deref(self, scanner, token):
-        return 'DEREF', token
+    def arith_op(self, scanner, token):
+        return 'ARITH_OP', token
 
     def open_bracket(self, scanner, token):
         return 'OPENBRACKET', token
@@ -209,20 +98,17 @@ class FilterTokenizer(AbstractTokenizer):
     def close_bracket(self, scanner, token):
         return 'CLOSEBRACKET', token
 
-    def op(self, scanner, token):
-        return 'OP', token
+    def logical_op(self, scanner, token):
+        return 'LOGICAL_OP', token.upper()
 
     def number(self, scanner, token):
         return 'NUMBER', token
 
-    def negation(self, scanner, token):
-        return 'UNEG', token
-
     def identifier(self, scanner, token):
         return 'IDENTIFIER', token
 
-    def bool_op(self, scanner, token):
-        return 'BOOL', token.upper()
+    def bool_lvalue(self, scanner, token):
+        return 'LVALUE', token.upper()
 
     def qstring(self, scanner, token):
         whatquote = token[0]
@@ -230,7 +116,7 @@ class FilterTokenizer(AbstractTokenizer):
         if whatquote == '\'':
             escaped_quote = "\\'"
 
-        return 'STRING', token[1:-1].replace(escaped_quote, whatquote)
+        return 'LVALUE', token[1:-1].replace(escaped_quote, whatquote)
 
     def open_paren(self, scanner, token):
         return 'OPENPAREN', token
@@ -244,11 +130,11 @@ class FilterTokenizer(AbstractTokenizer):
     def and_op(self, scanner, token):
         return 'AND', token
 
-    def in_op(self, scanner, token):
-        return 'OP', 'IN'
-
     def comma(self, scanner, token):
         return 'COMMA', token
+
+    def dot(self, scanner, token):
+        return 'DOT', token
 
     def none(self, scanner, token):
         return 'NONE', token
@@ -264,40 +150,6 @@ def logwrapper(func):
         return retval
 
     return f
-
-
-class AstBuilder(object):
-    def __init__(self, tokenizer, input_expression=None,
-                 functions=None, ns=None):
-        self.tokenizer = tokenizer
-        self.input_expression = input_expression
-        classname = self.__class__.__name__.lower()
-        self.logger = logging.getLogger('%s.%s' % (__name__, classname))
-        self.logger.debug('New builder on expression: %s' %
-                          self.input_expression)
-        self.functions = functions
-        if self.functions is None:
-            self.functions = default_functions
-
-        self.ns = ns
-        if self.ns is None:
-            self.ns = {}
-
-    def set_input(self, input_expression):
-        self.logger.debug('resetting input expression to %s' %
-                          input_expression)
-        self.input_expression = input_expression
-
-    def build(self):
-        self.tokenizer.parse(self.input_expression)
-        root_node = self.parse()
-        return root_node
-
-    def eval(self):
-        raise NotImplementedError('eval not implemented')
-
-    def parse(self):
-        raise NotImplementedError('parse not implemented')
 
 
 #
@@ -316,30 +168,40 @@ class AstBuilder(object):
 # value -> number | string | openbracket e_i [, e_i...] closebracket
 #
 
-class FilterBuilder(AstBuilder):
-    def __init__(self, tokenizer, input_expression=None,
-                 functions=None, ns=None):
-        super(FilterBuilder, self).__init__(tokenizer, input_expression,
-                                            functions=functions,
-                                            ns=ns)
+class AstBuilder(object):
+    def __init__(self, input_expression=None, symtable=None):
+        self.tokenizer = Tokenizer()
+
+        self.input_expression = input_expression
+        classname = self.__class__.__name__.lower()
+        self.logger = logging.getLogger('%s.%s' % (__name__, classname))
+        self.logger.debug('New builder on expression: %s' %
+                          self.input_expression)
+        self.symtable = symtable
+
+    def set_input(self, input_expression):
+        self.logger.debug('resetting input expression to %s' %
+                          input_expression)
+        self.input_expression = input_expression
+
+    def build(self):
+        self.tokenizer.parse(self.input_expression)
+        root_node = self.parse()
+        return root_node
 
     def parse(self):
         return self.parse_phrase()
 
-    def emit(self):
-        root_node = self.build()
-        return root_node.emit()
-
-    def eval_node(self, node, functions=None, ns=None):
+    def eval(self, symtable=None):
         root_node = self.build()
 
-        if functions is None:
-            functions = self.functions
+        if symtable is None:
+            symtable = self.symtable
 
-        if ns is None:
-            ns = self.ns
+        if symtable is None:
+            raise RuntimeError('No symbol table provided for evaluation')
 
-        return root_node.eval_node(node, functions=functions, ns=ns)
+        return root_node.eval(symtable)
 
     # criterion -> evaluable_item { uneg } op evaluable_item
     @logwrapper
@@ -399,7 +261,6 @@ class FilterBuilder(AstBuilder):
     def parse_evaluable_item(self):
         next_token, next_val = self.tokenizer.peek()
         if next_token == 'OPENBRACKET':
-            self.logger.debug("Found openbracket -- parsing eval item as ary")
             return self.parse_array()
 
         token, val = self.tokenizer.scan()
@@ -463,7 +324,7 @@ class FilterBuilder(AstBuilder):
         node = self.parse_expr()
 
         token, val = self.tokenizer.peek()
-        if token == 'OR' or (token == 'ARITH' and val in ['*', '/']):
+        if token == 'OR' or (token == 'ARITH_OP' and val in ['*', '/']):
             self.tokenizer.scan()  # eat the token
             rhs = self.parse_orexpr()
             return Node(node, val.upper(), rhs)
@@ -476,7 +337,7 @@ class FilterBuilder(AstBuilder):
         node = self.parse_orexpr()
 
         token, val = self.tokenizer.peek()
-        if token == 'AND' or (token == 'ARITH' and val in ['+', '-']):
+        if token == 'AND' or (token == 'ARITH_OP' and val in ['+', '-']):
             self.tokenizer.scan()  # eat the token
             rhs = self.parse_andexpr()
             return Node(node, val.upper(), rhs)
@@ -497,7 +358,7 @@ class FilterBuilder(AstBuilder):
         return node
 
 
-class Node:
+class Node(object):
     def __init__(self, lhs, op, rhs, negate=False):
         self.lhs = lhs
         self.rhs = rhs
@@ -506,123 +367,218 @@ class Node:
         classname = self.__class__.__name__.lower()
         self.logger = logging.getLogger('%s.%s' % (__name__, classname))
 
-    def arithop(self, op, val1, val2):
-        if op == '+':
-            return val1 + val2
-        if op == '-':
-            return val1 - val2
-        if op == '*':
-            return val1 * val2
-        if op == '/':
-            return val1 / val2
+        self.dotty_shape = 'ellipse'
+        self.dotty_label = str(op)
 
-        raise SyntaxError('Bad arith op: %s' % op)
+    def maybe_dotty(self, fd, node):
+        if isinstance(node, Node):
+            return node.dotty(fd)
 
-    def emit(self, indent=0):
-        outstr = " " * indent
-        outstr += self.op + ': '
-
-        if self.op in ['NUMBER', 'BOOL', 'NONE',
-                       'STRING', 'IDENTIFIER']:
-            outstr += self.value_to_s()
-        elif self.op in ['+', '-', '*', '/']:
-            outstr += '\n%s%s' % (self.lhs.emit(indent + 1),
-                                  self.rhs.emit(indent + 1))
-        elif self.op in ['AND', 'OR']:
-            outstr += '\n%s%s' % (self.lhs.emit(indent + 1),
-                                  self.rhs.emit(indent + 1))
-        else:
-            raise SyntaxError('Non emittable op: %s' % (self.op,))
-
-        return outstr + '\n'
-
-    def concrete(self, ns):
-        if self.op in ['NUMBER', 'BOOL', 'NONE']:
-            return self.value_to_s()
-
-        if self.op in ['STRING', 'IDENTIFIER']:
-            string = self.canonicalize_string(self.lhs, ns)
-            if self.op == 'STRING':
-                string = "'%s'" % string.replace("'", "\'")
-            return string
-
-        if self.op == 'FUNCTION':
-            return '%s(%s)' % (
-                self.lhs, ', '.join(map(lambda x: x.concrete(ns),
-                                        self.rhs)))
-
-        if self.op == 'AND' or self.op == 'OR':
-            return '(%s) %s (%s)' % (self.lhs.concrete(ns),
-                                     self.op,
-                                     self.rhs.concrete(ns))
-
-        return '%s %s%s %s' % (self.lhs.concrete(ns),
-                               '!' if self.negate else '',
-                               self.op,
-                               self.rhs.concrete(ns))
-
-    def canonicalize_string(self, string, ns):
-        result = string
-
-        match = re.match("(.*)\{(.*?)}(.*)", string)
-        if match is not None:
-            start = match.group(1)
-            term = match.group(2)
-            end = match.group(3)
-
-            if term in ns:
-                result = "%s%s%s" % (start,
-                                     ns[term],
-                                     self.canonicalize_string(end, ns))
-            else:
-                result = "%s{%s}%s" % (start,
-                                       term,
-                                       self.canonicalize_string(end, ns))
-
-        return result
-
-    def value_to_s(self):
-        if self.op == 'STRING':
-            return "'%s'" % self.lhs.replace("\\'", "'").replace("'", "\\'")
-
-        if self.op == 'BOOL':
-            return str(self.lhs).lower()
-
-        return str(self.lhs)
-
-    def to_s(self):
-        if self.op in ['NUMBER', 'BOOL', 'STRING',
-                       'IDENTIFIER', 'NONE']:
-            return self.value_to_s()
-
-        if self.op == 'FUNCTION':
-            return '%s(%s)' % (self.lhs, ', '. join(map(lambda x: x.to_s(),
-                                                        self.rhs)))
-
-        if self.op == 'AND' or self.op == 'OR':
-            return '(%s) %s (%s)' % (self.lhs.to_s(), self.op, self.rhs.to_s())
-
-        return '%s %s%s %s' % (self.lhs.to_s(), '!' if self.negate else '',
-                               self.op.lower(), self.rhs.to_s())
-
-    def canonicalize_identifier(self, node, identifier, ns=None):
-        if not identifier:
+        if node is None:
             return None
 
-        if ns is None:
-            ns = {}
+        print >>fd, '"%s" -> "%s"' % (id(node), node)
+        return id(node)
 
-        # check for string interpolation in identifier.
-        match = re.match("(.*)\{(.*?)}(.*)", identifier)
-        if match is not None:
-            resolved_match_term = self.eval_identifier(node, match.group(2),
-                                                       ns)
-            new_identifier = "%s%s%s" % (match.group(1), resolved_match_term,
-                                         match.group(3))
+    def dotty(self, fd):
+        left_entity = self.maybe_dotty(fd, self.lhs)
+        right_entity = self.maybe_dotty(fd, self.lhs)
 
-            return self.canonicalize_identifier(node, new_identifier, ns)
+        if left_entity is not None:
+            print >>fd, '"%s" -> "%s"' % (id(self), left_entity)
 
-        return identifier
+        if right_entity is not None:
+            print >>fd, '"%s" -> "%s"' % (id(self), right_entity)
+
+        print >>fd, '"%s" [label="%s" shape="%s"]' % (
+            id(self), self.dotty_label, self.dotty_shape)
+
+        return id(self)
+
+
+class MapBasedOp(Node):
+    def __init__(self, lhs, op, rhs):
+        super(ArithOp, self).__init__(lhs, op, rhs)
+        self.dotty_shape = "circle"
+        self.dotty_label = self.op
+
+    def eval(self, symtable):
+        if not self.op in self.op_map:
+            raise SyntaxError('Invalid op: "%s"' % self.op)
+
+        return self.op_map[self.op](self.lhs.eval(symtable),
+                                    self.rhs.eval(symtable))
+
+
+class ArithOp(MapBasedOp):
+    def __init__(self, lhs, op, rhs):
+        super(ArithOp, self).__init__(lhs, op, rhs)
+        self.op_map = {'+': operator.add,
+                       '-': operator.sub,
+                       '*': operator.mul,
+                       '/': operator.div}
+
+
+class LogicalOp(MapBasedOp):
+    def __init__(self, lhs, op, rhs):
+        super(ArithOp, self).__init__(lhs, op, rhs)
+        self.op_map =  {'and': operator.and_,
+                        'or': operator.or_}
+
+
+class BoolOp(MapBasedOp):
+    """
+    >, <, etc
+    """
+    def __init__(self, lhs, op, rhs):
+        super(BoolOp, self).__init__(lhs, op, rhs)
+        self.op_map = {'>': operator.gt,
+                       '<': operator.lt,
+                       '<=': operator.le,
+                       '>=': operator.ge,
+                       '==': operator.eq}
+
+class Literal(Node):
+    def __init__(self, ltype, lvalue):
+        super(Literal, self).__init__(lvalue, ltype, None)
+        self.dotty_shape = "square"
+        self.dotty_label = str(self.lhs)
+
+    def dotty(self, fd):
+        print >>fd, '"%s" [label="%s" shape="%s"]' % (
+            id(self), self.dotty_label, self.dotty_shape)
+        return self.id
+
+    def eval(self, symtable):
+        return self.lhs
+
+
+class Identifier(Node):
+    def __init__(self, ivalue):
+        super(Literal, self).__init__(ivalue, 'IDENTIFIER', None)
+        self.dotty_shape = "square"
+        self.dotty_label = str(self.lhs)
+
+    def eval(self, symtable):
+        if not self.lhs in symtable:
+            raise SyntaxError('Unknown identifier: "%s"' % self.lhs)
+        return symtable[self.lhs]
+
+    # def arithop(self, op, val1, val2):
+    #     if op == '+':
+    #         return val1 + val2
+    #     if op == '-':
+    #         return val1 - val2
+    #     if op == '*':
+    #         return val1 * val2
+    #     if op == '/':
+    #         return val1 / val2
+    #     raise SyntaxError('Bad arith op: %s' % op)
+
+    # def emit(self, indent=0):
+    #     outstr = ' ' * indent
+    #     outstr += self.op + ': '
+
+    #     if self.op in ['NUMBER', 'BOOL', 'NONE',
+    #                    'STRING', 'IDENTIFIER']:
+    #         outstr += self.value_to_s()
+    #     elif self.op in ['+', '-', '*', '/']:
+    #         outstr += '\n%s%s' % (self.lhs.emit(indent + 1),
+    #                               self.rhs.emit(indent + 1))
+    #     elif self.op in ['AND', 'OR']:
+    #         outstr += '\n%s%s' % (self.lhs.emit(indent + 1),
+    #                               self.rhs.emit(indent + 1))
+    #     else:
+    #         raise SyntaxError('Non emittable op: %s' % (self.op,))
+
+    #     return outstr + '\n'
+
+    # def concrete(self, ns):
+    #     if self.op in ['NUMBER', 'BOOL', 'NONE']:
+    #         return self.value_to_s()
+
+    #     if self.op in ['STRING', 'IDENTIFIER']:
+    #         string = self.canonicalize_string(self.lhs, ns)
+    #         if self.op == 'STRING':
+    #             string = "'%s'" % string.replace("'", "\'")
+    #         return string
+
+    #     if self.op == 'FUNCTION':
+    #         return '%s(%s)' % (
+    #             self.lhs, ', '.join(map(lambda x: x.concrete(ns),
+    #                                     self.rhs)))
+
+    #     if self.op == 'AND' or self.op == 'OR':
+    #         return '(%s) %s (%s)' % (self.lhs.concrete(ns),
+    #                                  self.op,
+    #                                  self.rhs.concrete(ns))
+
+    #     return '%s %s%s %s' % (self.lhs.concrete(ns),
+    #                            '!' if self.negate else '',
+    #                            self.op,
+    #                            self.rhs.concrete(ns))
+
+    # def canonicalize_string(self, string, ns):
+    #     result = string
+
+    #     match = re.match("(.*)\{(.*?)}(.*)", string)
+    #     if match is not None:
+    #         start = match.group(1)
+    #         term = match.group(2)
+    #         end = match.group(3)
+
+    #         if term in ns:
+    #             result = "%s%s%s" % (start,
+    #                                  ns[term],
+    #                                  self.canonicalize_string(end, ns))
+    #         else:
+    #             result = "%s{%s}%s" % (start,
+    #                                    term,
+    #                                    self.canonicalize_string(end, ns))
+
+    #     return result
+
+    # def value_to_s(self):
+    #     if self.op == 'STRING':
+    #         return "'%s'" % self.lhs.replace("\\'", "'").replace("'", "\\'")
+
+    #     if self.op == 'BOOL':
+    #         return str(self.lhs).lower()
+
+    #     return str(self.lhs)
+
+    # def to_s(self):
+    #     if self.op in ['NUMBER', 'BOOL', 'STRING',
+    #                    'IDENTIFIER', 'NONE']:
+    #         return self.value_to_s()
+
+    #     if self.op == 'FUNCTION':
+    #         return '%s(%s)' % (self.lhs, ', '. join(map(lambda x: x.to_s(),
+    #                                                     self.rhs)))
+
+    #     if self.op == 'AND' or self.op == 'OR':
+    #         return '(%s) %s (%s)' % (self.lhs.to_s(), self.op, self.rhs.to_s())
+
+    #     return '%s %s%s %s' % (self.lhs.to_s(), '!' if self.negate else '',
+    #                            self.op.lower(), self.rhs.to_s())
+
+    # def canonicalize_identifier(self, identifier, ns=None):
+    #     if not identifier:
+    #         return None
+
+    #     if ns is None:
+    #         ns = {}
+
+    #     # check for string interpolation in identifier.
+    #     match = re.match("(.*)\{(.*?)}(.*)", identifier)
+    #     if match is not None:
+    #         resolved_match_term = self.eval_identifier(match.group(2), ns)
+    #         new_identifier = "%s%s%s" % (match.group(1), resolved_match_term,
+    #                                      match.group(3))
+
+    #         return self.canonicalize_identifier(new_identifier, ns)
+
+    #     return identifier
 
     # def assign_identifier(self, node, identifier, value, ns=None):
     #     # there is lots of strange flakeyness here.
@@ -678,197 +634,165 @@ class Node:
 
     #     raise ValueError('Cannot express assignment to id: %s' % identifier)
 
-    def eval_identifier(self, node, identifier, ns=None):
-        self.logger.debug('resolving identifier "%s" on:\n%s with ns %s' %
-                          (identifier, node, ns))
+    # def eval_identifier(self, identifier, ns=None):
+    #     self.logger.debug('resolving identifier "%s" with ns %s' %
+    #                       (identifier, ns))
 
-        if node is None or identifier is None:
-            raise TypeError('invalid node or identifier in eval_identifier')
+    #     if identifier in ns:
+    #         return ns[identifier]
 
-        if identifier in ns:
-            return ns[identifier]
+    #     return None
 
-        # check for string interpolation in identifier.
-        match = re.match("(.*)\{(.*?)}(.*)", identifier)
-        if match is not None:
-            resolved_match_term = self.eval_identifier(node, match.group(2))
-            new_identifier = "%s%s%s" % (match.group(1), resolved_match_term,
-                                         match.group(3))
+    # def __str__(self):
+    #     if self.op == 'STRING':
+    #         return str(self.lhs)
 
-            return self.eval_identifier(node, new_identifier, ns)
+    #     if self.op == 'NUMBER':
+    #         return str(int(self.lhs))
 
-        if identifier.find('.') == -1:
-            if identifier in node:
-                return node[identifier]
-            else:
-                # should this raise?
-                self.logger.debug('cannot find attribute %s in node' %
-                                  identifier)
-                return None
+    #     if self.op == 'BOOL':
+    #         return str(self.lhs)
 
-        # of the format something.something
-        (attr, rest) = identifier.split('.', 1)
+    #     if self.op == 'IDENTIFIER':
+    #         return 'IDENTIFIER %s' % self.lhs
 
-        self.logger.debug('checking for attr %s in %s' % (attr, node))
+    #     if self.op == 'NONE':
+    #         return 'VALUE None'
 
-        if attr in node:
-            return self.eval_identifier(node[attr], rest, ns)
-        else:
-            return None
+    #     if self.op == 'FUNCTION':
+    #         return 'FN %s(%s)' % (str(self.lhs), ', '.join(map(str, self.rhs)))
 
-        return None
+    #     return '(%s) %s (%s)' % (str(self.lhs), self.op, str(self.rhs))
 
-    def __str__(self):
-        if self.op == 'STRING':
-            return str(self.lhs)
+    # def eval_node(self, functions=None, ns=None):
+    #     rhs_val = None
+    #     lhs_val = None
+    #     result = False
 
-        if self.op == 'NUMBER':
-            return str(int(self.lhs))
+    #     retval = None
 
-        if self.op == 'BOOL':
-            return str(self.lhs)
+    #     if ns is None:
+    #         ns = {}
 
-        if self.op == 'IDENTIFIER':
-            return 'IDENTIFIER %s' % self.lhs
+    #     if functions is None:
+    #         functions = default_functions
 
-        if self.op == 'NONE':
-            return 'VALUE None'
+    #     self.logger.debug('evaluating %s with ns %s' %
+    #                       (str(self), ns))
 
-        if self.op == 'FUNCTION':
-            return 'FN %s(%s)' % (str(self.lhs), ', '.join(map(str, self.rhs)))
+    #     if self.op in ['STRING', 'NUMBER', 'BOOL',
+    #                    'IDENTIFIER', 'FUNCTION', 'ARRAY', 'NONE']:
+    #         if self.op == 'STRING':
+    #             # check for string interpolation in identifier.
+    #             retval = str(self.lhs)
+    #             match = re.match("(.*)\{(.*?)}(.*)", retval)
+    #             if match is not None:
+    #                 resolved_match_term = self.eval_identifier(
+    #                     match.group(2), ns)
+    #                 retval = "%s%s%s" % (match.group(1), resolved_match_term,
+    #                                      match.group(3))
 
-        return '(%s) %s (%s)' % (str(self.lhs), self.op, str(self.rhs))
+    #         if self.op == 'NUMBER':
+    #             retval = int(self.lhs)
 
-    def eval_node(self, node, functions=None, ns=None):
-        rhs_val = None
-        lhs_val = None
-        result = False
+    #         if self.op == 'BOOL':
+    #             if self.lhs == 'TRUE':
+    #                 retval = True
+    #             else:
+    #                 retval = False
 
-        retval = None
+    #         if self.op == 'IDENTIFIER':
+    #             retval = self.eval_identifier(self.lhs, ns)
 
-        if ns is None:
-            ns = {}
+    #         if self.op == 'NONE':
+    #             retval = None
 
-        if functions is None:
-            functions = default_functions
+    #         if self.op == 'ARRAY':
+    #             retval = []
+    #             for item in self.lhs:
+    #                 retval.append(item.eval_node(ns=ns))
+    #             return retval
 
-        self.logger.debug('evaluating %s with ns %s' %
-                          (str(self), ns))
+    #         if self.op == 'FUNCTION':
+    #             if not self.lhs in functions:
+    #                 raise SyntaxError('unknown function %s' % self.lhs)
 
-        if self.op in ['STRING', 'NUMBER', 'BOOL',
-                       'IDENTIFIER', 'FUNCTION', 'ARRAY', 'NONE']:
-            if self.op == 'STRING':
-                # check for string interpolation in identifier.
-                retval = str(self.lhs)
-                match = re.match("(.*)\{(.*?)}(.*)", retval)
-                if match is not None:
-                    resolved_match_term = self.eval_identifier(node,
-                                                               match.group(2),
-                                                               ns)
-                    retval = "%s%s%s" % (match.group(1), resolved_match_term,
-                                         match.group(3))
+    #             args = map(lambda x: x.eval_node(functions, ns),
+    #                        self.rhs)
 
-            if self.op == 'NUMBER':
-                retval = int(self.lhs)
+    #             retval = functions[self.lhs](*args)
 
-            if self.op == 'BOOL':
-                if self.lhs == 'TRUE':
-                    retval = True
-                else:
-                    retval = False
+    #         self.logger.debug('evaluated %s to %s' % (str(self), retval))
+    #         return retval
 
-            if self.op == 'IDENTIFIER':
-                retval = self.eval_identifier(node, self.lhs, ns)
+    #     self.logger.debug('arithmetic op, type %s' % self.op)
 
-            if self.op == 'NONE':
-                retval = None
+    #     # otherwise arithmetic op
+    #     lhs_val = self.lhs.eval_node(functions, ns)
+    #     rhs_val = self.rhs.eval_node(functions, ns)
 
-            if self.op == 'ARRAY':
-                retval = []
-                for item in self.lhs:
-                    retval.append(item.eval_node(node, ns=ns))
-                return retval
+    #     # wrong types is always false
+    #     if type(lhs_val) == unicode:
+    #         lhs_val = str(lhs_val)
 
-            if self.op == 'FUNCTION':
-                if not self.lhs in functions:
-                    raise SyntaxError('unknown function %s' % self.lhs)
+    #     if type(rhs_val) == unicode:
+    #         rhs_val = str(rhs_val)
 
-                args = map(lambda x: x.eval_node(node, functions, ns),
-                           self.rhs)
+    #     self.logger.debug('checking %s %s %s' % (lhs_val, self.op, rhs_val))
 
-                retval = functions[self.lhs](*args)
+    #     # handle arith first
+    #     if self.op in ['+', '-', '/', '*']:
+    #         if not isinstance(lhs_val, type(rhs_val)):
+    #             raise SyntaxError('Mismatched types for "%s"' % self.op)
 
-            self.logger.debug('evaluated %s to %s' % (str(self), retval))
-            return retval
+    #         result = self.arithop(self.op, lhs_val, rhs_val)
+    #         return result
 
-        self.logger.debug('arithmetic op, type %s' % self.op)
+    #     if self.op == '=':
+    #         if lhs_val == rhs_val:
+    #             result = True
+    #     elif self.op == '<':
+    #         if type(lhs_val) != type(rhs_val):
+    #             return False
+    #         elif lhs_val < rhs_val:
+    #             result = True
+    #     elif self.op == '>':
+    #         if type(lhs_val) != type(rhs_val):
+    #             return False
+    #         elif lhs_val > rhs_val:
+    #             result = True
+    #     elif self.op == '<=':
+    #         if type(lhs_val) != type(rhs_val):
+    #             return False
+    #         elif lhs_val <= rhs_val:
+    #             result = True
+    #     elif self.op == '>=':
+    #         if type(lhs_val) != type(rhs_val):
+    #             return False
+    #         elif lhs_val >= rhs_val:
+    #             result = True
+    #     elif self.op == 'AND':
+    #         result = lhs_val and rhs_val
+    #     elif self.op == 'OR':
+    #         result = lhs_val or rhs_val
+    #     elif self.op == 'IN':
+    #         try:
+    #             if lhs_val in rhs_val:
+    #                 result = True
+    #         except Exception:
+    #             result = False
+    #     elif self.op == ':=':
+    #         if self.lhs.op != 'IDENTIFIER':
+    #             raise SyntaxError('must assign to identifier: %s' %
+    #                               (self.lhs.lhs))
+    #         self.logger.debug('setting %s to %s' % (self.lhs.lhs, rhs_val))
+    #         self.assign_identifier(self.lhs.lhs, rhs_val, ns)
+    #         result = rhs_val
+    #     else:
+    #         raise SyntaxError('bad op token (%s)' % self.op)
 
-        # otherwise arithmetic op
-        lhs_val = self.lhs.eval_node(node, functions, ns)
-        rhs_val = self.rhs.eval_node(node, functions, ns)
+    #     if self.negate:
+    #         result = not result
 
-        # wrong types is always false
-        if type(lhs_val) == unicode:
-            lhs_val = str(lhs_val)
-
-        if type(rhs_val) == unicode:
-            rhs_val = str(rhs_val)
-
-        self.logger.debug('checking %s %s %s' % (lhs_val, self.op, rhs_val))
-
-        # handle arith first
-        if self.op in ['+', '-', '/', '*']:
-            if not isinstance(lhs_val, type(rhs_val)):
-                raise SyntaxError('Mismatched types for "%s"' % self.op)
-
-            result = self.arithop(self.op, lhs_val, rhs_val)
-            return result
-
-        if self.op == '=':
-            if lhs_val == rhs_val:
-                result = True
-        elif self.op == '<':
-            if type(lhs_val) != type(rhs_val):
-                return False
-            elif lhs_val < rhs_val:
-                result = True
-        elif self.op == '>':
-            if type(lhs_val) != type(rhs_val):
-                return False
-            elif lhs_val > rhs_val:
-                result = True
-        elif self.op == '<=':
-            if type(lhs_val) != type(rhs_val):
-                return False
-            elif lhs_val <= rhs_val:
-                result = True
-        elif self.op == '>=':
-            if type(lhs_val) != type(rhs_val):
-                return False
-            elif lhs_val >= rhs_val:
-                result = True
-        elif self.op == 'AND':
-            result = lhs_val and rhs_val
-        elif self.op == 'OR':
-            result = lhs_val or rhs_val
-        elif self.op == 'IN':
-            try:
-                if lhs_val in rhs_val:
-                    result = True
-            except Exception:
-                result = False
-        elif self.op == ':=':
-            if self.lhs.op != 'IDENTIFIER':
-                raise SyntaxError('must assign to identifier: %s' %
-                                  (self.lhs.lhs))
-            self.logger.debug('setting %s to %s' % (self.lhs.lhs, rhs_val))
-            self.assign_identifier(node, self.lhs.lhs, rhs_val, ns)
-            result = rhs_val
-        else:
-            raise SyntaxError('bad op token (%s)' % self.op)
-
-        if self.negate:
-            result = not result
-
-        self.logger.debug('Returning %s' % (result,))
-        return result
+    #     self.logger.debug('Returning %s' % (result,))
+    #     return result
